@@ -36,6 +36,8 @@ import {
   GraphQLID
 } from '../type/scalars';
 
+import { GraphQLDirective } from '../type/directives';
+
 import { TypeKind } from '../type/introspection';
 
 import type {
@@ -74,10 +76,10 @@ export function buildClientSchema(
 ): GraphQLSchema {
 
   // Get the schema from the introspection result.
-  var schemaIntrospection = introspection.__schema;
+  const schemaIntrospection = introspection.__schema;
 
   // Converts the list of types into a keyMap based on the type names.
-  var typeIntrospectionMap = keyMap(
+  const typeIntrospectionMap = keyMap(
     schemaIntrospection.types,
     type => type.name
   );
@@ -85,7 +87,7 @@ export function buildClientSchema(
   // A cache to use to store the actual GraphQLType definition objects by name.
   // Initialize to the GraphQL built in scalars. All functions below are inline
   // so that this type def cache is within the scope of the closure.
-  var typeDefCache = {
+  const typeDefCache = {
     String: GraphQLString,
     Int: GraphQLInt,
     Float: GraphQLFloat,
@@ -97,18 +99,23 @@ export function buildClientSchema(
   // preferring cached instances before building new instances.
   function getType(typeRef: IntrospectionTypeRef): GraphQLType {
     if (typeRef.kind === TypeKind.LIST) {
-      var itemRef = ((typeRef: any): IntrospectionListTypeRef).ofType;
+      const itemRef = ((typeRef: any): IntrospectionListTypeRef).ofType;
       if (!itemRef) {
         throw new Error('Decorated type deeper than introspection query.');
       }
       return new GraphQLList(getType(itemRef));
     }
     if (typeRef.kind === TypeKind.NON_NULL) {
-      var nullableRef = ((typeRef: any): IntrospectionNonNullTypeRef).ofType;
+      const nullableRef = ((typeRef: any): IntrospectionNonNullTypeRef).ofType;
       if (!nullableRef) {
         throw new Error('Decorated type deeper than introspection query.');
       }
-      return new GraphQLNonNull(getType(nullableRef));
+      const nullableType = getType(nullableRef);
+      invariant(
+        !(nullableType instanceof GraphQLNonNull),
+        'No nesting nonnull.'
+      );
+      return new GraphQLNonNull(nullableType);
     }
     return getNamedType(typeRef.name);
   }
@@ -117,7 +124,7 @@ export function buildClientSchema(
     if (typeDefCache[typeName]) {
       return typeDefCache[typeName];
     }
-    var typeIntrospection = typeIntrospectionMap[typeName];
+    const typeIntrospection = typeIntrospectionMap[typeName];
     if (!typeIntrospection) {
       throw new Error(
         `Invalid or incomplete schema, unknown type: ${typeName}. Ensure ` +
@@ -125,13 +132,13 @@ export function buildClientSchema(
         `client schema.`
       );
     }
-    var typeDef = buildType(typeIntrospection);
+    const typeDef = buildType(typeIntrospection);
     typeDefCache[typeName] = typeDef;
     return typeDef;
   }
 
   function getInputType(typeRef: IntrospectionTypeRef): GraphQLInputType {
-    var type = getType(typeRef);
+    const type = getType(typeRef);
     invariant(
       isInputType(type),
       `Introspection must provide input type for arguments.`
@@ -140,7 +147,7 @@ export function buildClientSchema(
   }
 
   function getOutputType(typeRef: IntrospectionTypeRef): GraphQLOutputType {
-    var type = getType(typeRef);
+    const type = getType(typeRef);
     invariant(
       isOutputType(type),
       `Introspection must provide output type for fields.`
@@ -149,7 +156,7 @@ export function buildClientSchema(
   }
 
   function getObjectType(typeRef: IntrospectionTypeRef): GraphQLObjectType {
-    var type = getType(typeRef);
+    const type = getType(typeRef);
     invariant(
       type instanceof GraphQLObjectType,
       `Introspection must provide object type for possibleTypes.`
@@ -160,7 +167,7 @@ export function buildClientSchema(
   function getInterfaceType(
     typeRef: IntrospectionTypeRef
   ): GraphQLInterfaceType {
-    var type = getType(typeRef);
+    const type = getType(typeRef);
     invariant(
       type instanceof GraphQLInterfaceType,
       `Introspection must provide interface type for interfaces.`
@@ -171,7 +178,7 @@ export function buildClientSchema(
 
   // Given a type's introspection result, construct the correct
   // GraphQLType instance.
-  function buildType(type: IntrospectionType): GraphQLType {
+  function buildType(type: IntrospectionType): GraphQLNamedType {
     switch (type.kind) {
       case TypeKind.SCALAR:
         return buildScalarDef(type);
@@ -258,6 +265,7 @@ export function buildClientSchema(
         valueIntrospection => valueIntrospection.name,
         valueIntrospection => ({
           description: valueIntrospection.description,
+          deprecationReason: valueIntrospection.deprecationReason,
         })
       )
     });
@@ -273,12 +281,13 @@ export function buildClientSchema(
     });
   }
 
-  function buildFieldDefMap(typeIntrospection): any {
+  function buildFieldDefMap(typeIntrospection) {
     return keyValMap(
       typeIntrospection.fields,
       fieldIntrospection => fieldIntrospection.name,
       fieldIntrospection => ({
         description: fieldIntrospection.description,
+        deprecationReason: fieldIntrospection.deprecationReason,
         type: getOutputType(fieldIntrospection.type),
         args: buildInputValueDefMap(fieldIntrospection.args),
         resolve: () => {
@@ -292,19 +301,33 @@ export function buildClientSchema(
     return keyValMap(
       inputValueIntrospections,
       inputValue => inputValue.name,
-      inputValue => {
-        var description = inputValue.description;
-        var type = getInputType(inputValue.type);
-        var defaultValue = inputValue.defaultValue ?
-          valueFromAST(parseValue(inputValue.defaultValue), type) :
-          null;
-        return { description, type, defaultValue };
-      }
+      buildInputValue
     );
   }
 
-  // TODO: deprecation
-  // TODO: directives
+  function buildInputValue(inputValueIntrospection) {
+    const type = getInputType(inputValueIntrospection.type);
+    const defaultValue = inputValueIntrospection.defaultValue ?
+      valueFromAST(parseValue(inputValueIntrospection.defaultValue), type) :
+      null;
+    return {
+      name: inputValueIntrospection.name,
+      description: inputValueIntrospection.description,
+      type,
+      defaultValue,
+    };
+  }
+
+  function buildDirective(directiveIntrospection) {
+    return new GraphQLDirective({
+      name: directiveIntrospection.name,
+      description: directiveIntrospection.description,
+      args: directiveIntrospection.args.map(buildInputValue),
+      onOperation: directiveIntrospection.onOperation,
+      onFragment: directiveIntrospection.onFragment,
+      onField: directiveIntrospection.onField,
+    });
+  }
 
   // Iterate through all types, getting the type definition for each, ensuring
   // that any type not directly referenced by a field will get created.
@@ -312,17 +335,28 @@ export function buildClientSchema(
     typeIntrospection => getNamedType(typeIntrospection.name)
   );
 
-  // Get the root Query and Mutation types.
-  var queryType = getType(schemaIntrospection.queryType);
-  var mutationType = schemaIntrospection.mutationType ?
-    getType(schemaIntrospection.mutationType) :
+  // Get the root Query, Mutation, and Subscription types.
+  const queryType = getObjectType(schemaIntrospection.queryType);
+
+  const mutationType = schemaIntrospection.mutationType ?
+    getObjectType(schemaIntrospection.mutationType) :
     null;
 
-  // Then produce and return a Schema with these types.
-  var schema = new GraphQLSchema({
-    query: (queryType: any),
-    mutation: (mutationType: any)
-  });
+  const subscriptionType = schemaIntrospection.subscriptionType ?
+    getObjectType(schemaIntrospection.subscriptionType) :
+    null;
 
-  return schema;
+  // Get the directives supported by Introspection, assuming empty-set if
+  // directives were not queried for.
+  const directives = schemaIntrospection.directives ?
+    schemaIntrospection.directives.map(buildDirective) :
+    [];
+
+  // Then produce and return a Schema with these types.
+  return new GraphQLSchema({
+    query: queryType,
+    mutation: mutationType,
+    subscription: subscriptionType,
+    directives,
+  });
 }

@@ -1,4 +1,4 @@
-/* @flow weak */
+/* @flow */
 /**
  *  Copyright (c) 2015, Facebook, Inc.
  *  All rights reserved.
@@ -25,18 +25,18 @@ import { GraphQLString, GraphQLBoolean } from './scalars';
 import type { GraphQLFieldDefinition } from './definition';
 
 
-export var __Schema = new GraphQLObjectType({
+export const __Schema = new GraphQLObjectType({
   name: '__Schema',
-  description: 'A GraphQL Schema defines the capabilities of a GraphQL ' +
-               'server. It exposes all available types and directives on ' +
-               'the server, as well as the entry points for query and ' +
-               'mutation operations.',
+  description:
+    'A GraphQL Schema defines the capabilities of a GraphQL server. It ' +
+    'exposes all available types and directives on the server, as well as ' +
+    'the entry points for query, mutation, and subscription operations.',
   fields: () => ({
     types: {
       description: 'A list of all types supported by this server.',
       type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(__Type))),
       resolve(schema) {
-        var typeMap = schema.getTypeMap();
+        const typeMap = schema.getTypeMap();
         return Object.keys(typeMap).map(key => typeMap[key]);
       }
     },
@@ -51,6 +51,12 @@ export var __Schema = new GraphQLObjectType({
       type: __Type,
       resolve: schema => schema.getMutationType()
     },
+    subscriptionType: {
+      description: 'If this server support subscription, the type that ' +
+                   'subscription operations will be rooted at.',
+      type: __Type,
+      resolve: schema => schema.getSubscriptionType()
+    },
     directives: {
       description: 'A list of all directives supported by this server.',
       type:
@@ -60,8 +66,15 @@ export var __Schema = new GraphQLObjectType({
   })
 });
 
-var __Directive = new GraphQLObjectType({
+const __Directive = new GraphQLObjectType({
   name: '__Directive',
+  description:
+    'A Directive provides a way to describe alternate runtime execution and ' +
+    'type validation behavior in a GraphQL document.' +
+    '\n\nIn some cases, you need to provide options to alter GraphQL’s ' +
+    'execution behavior in ways field arguments will not suffice, such as ' +
+    'conditionally including or skipping a field. Directives provide this by ' +
+    'describing additional information to the executor.',
   fields: () => ({
     name: { type: new GraphQLNonNull(GraphQLString) },
     description: { type: GraphQLString },
@@ -76,8 +89,17 @@ var __Directive = new GraphQLObjectType({
   }),
 });
 
-var __Type = new GraphQLObjectType({
+const __Type = new GraphQLObjectType({
   name: '__Type',
+  description:
+    'The fundamental unit of any GraphQL Schema is the type. There are ' +
+    'many kinds of types in GraphQL as represented by the `__TypeKind` enum.' +
+    '\n\nDepending on the kind of a type, certain fields describe ' +
+    'information about that type. Scalar types provide no information ' +
+    'beyond a name and description, while Enum types provide their values. ' +
+    'Object and Interface types provide the fields they describe. Abstract ' +
+    'types, Union and Interface, provide the Object types possible ' +
+    'at runtime. List and NonNull types compose other types.',
   fields: () => ({
     kind: {
       type: new GraphQLNonNull(__TypeKind),
@@ -112,8 +134,8 @@ var __Type = new GraphQLObjectType({
       resolve(type, { includeDeprecated }) {
         if (type instanceof GraphQLObjectType ||
             type instanceof GraphQLInterfaceType) {
-          var fieldMap = type.getFields();
-          var fields =
+          const fieldMap = type.getFields();
+          let fields =
             Object.keys(fieldMap).map(fieldName => fieldMap[fieldName]);
           if (!includeDeprecated) {
             fields = fields.filter(field => !field.deprecationReason);
@@ -147,7 +169,7 @@ var __Type = new GraphQLObjectType({
       },
       resolve(type, { includeDeprecated }) {
         if (type instanceof GraphQLEnumType) {
-          var values = type.getValues();
+          let values = type.getValues();
           if (!includeDeprecated) {
             values = values.filter(value => !value.deprecationReason);
           }
@@ -159,7 +181,7 @@ var __Type = new GraphQLObjectType({
       type: new GraphQLList(new GraphQLNonNull(__InputValue)),
       resolve(type) {
         if (type instanceof GraphQLInputObjectType) {
-          var fieldMap = type.getFields();
+          const fieldMap = type.getFields();
           return Object.keys(fieldMap).map(fieldName => fieldMap[fieldName]);
         }
       }
@@ -168,8 +190,11 @@ var __Type = new GraphQLObjectType({
   })
 });
 
-var __Field = new GraphQLObjectType({
+const __Field = new GraphQLObjectType({
   name: '__Field',
+  description:
+    'Object and Interface types are described by a list of Fields, each of ' +
+    'which has a name, potentially a list of arguments, and a return type.',
   fields: () => ({
     name: { type: new GraphQLNonNull(GraphQLString) },
     description: { type: GraphQLString },
@@ -189,24 +214,35 @@ var __Field = new GraphQLObjectType({
   })
 });
 
-var __InputValue = new GraphQLObjectType({
+const __InputValue = new GraphQLObjectType({
   name: '__InputValue',
+  description:
+    'Arguments provided to Fields or Directives and the input fields of an ' +
+    'InputObject are represented as Input Values which describe their type ' +
+    'and optionally a default value.',
   fields: () => ({
     name: { type: new GraphQLNonNull(GraphQLString) },
     description: { type: GraphQLString },
     type: { type: new GraphQLNonNull(__Type) },
     defaultValue: {
       type: GraphQLString,
-      resolve: inputVal => inputVal.defaultValue == null ?
+      description:
+        'A GraphQL-formatted string representing the default value for this ' +
+        'input value.',
+      resolve: inputVal => isNullish(inputVal.defaultValue) ?
         null :
         print(astFromValue(inputVal.defaultValue, inputVal))
     }
   })
 });
 
-var __EnumValue = new GraphQLObjectType({
+const __EnumValue = new GraphQLObjectType({
   name: '__EnumValue',
-  fields: {
+  description:
+    'One possible value for a given Enum. Enum values are unique values, not ' +
+    'a placeholder for a string or numeric value. However an Enum value is ' +
+    'returned in a JSON response as a string.',
+  fields: () => ({
     name: { type: new GraphQLNonNull(GraphQLString) },
     description: { type: GraphQLString },
     isDeprecated: {
@@ -216,10 +252,10 @@ var __EnumValue = new GraphQLObjectType({
     deprecationReason: {
       type: GraphQLString,
     }
-  }
+  })
 });
 
-export var TypeKind = {
+export const TypeKind = {
   SCALAR: 'SCALAR',
   OBJECT: 'OBJECT',
   INTERFACE: 'INTERFACE',
@@ -230,9 +266,9 @@ export var TypeKind = {
   NON_NULL: 'NON_NULL',
 };
 
-var __TypeKind = new GraphQLEnumType({
+const __TypeKind = new GraphQLEnumType({
   name: '__TypeKind',
-  description: 'An enum describing what kind of type a given __Type is',
+  description: 'An enum describing what kind of type a given `__Type` is.',
   values: {
     SCALAR: {
       value: TypeKind.SCALAR,
@@ -281,7 +317,7 @@ var __TypeKind = new GraphQLEnumType({
  * so the format for args is different.
  */
 
-export var SchemaMetaFieldDef: GraphQLFieldDefinition = {
+export const SchemaMetaFieldDef: GraphQLFieldDefinition = {
   name: '__schema',
   type: new GraphQLNonNull(__Schema),
   description: 'Access the current type schema of this server.',
@@ -289,17 +325,18 @@ export var SchemaMetaFieldDef: GraphQLFieldDefinition = {
   resolve: (source, args, { schema }) => schema
 };
 
-export var TypeMetaFieldDef: GraphQLFieldDefinition = {
+export const TypeMetaFieldDef: GraphQLFieldDefinition = {
   name: '__type',
   type: __Type,
   description: 'Request the type information of a single type.',
   args: [
     { name: 'name', type: new GraphQLNonNull(GraphQLString) }
   ],
-  resolve: (source, { name }, { schema }) => schema.getType(name)
+  resolve: (source, { name }: { name: string }, { schema }) =>
+    schema.getType(name)
 };
 
-export var TypeNameMetaFieldDef: GraphQLFieldDefinition = {
+export const TypeNameMetaFieldDef: GraphQLFieldDefinition = {
   name: '__typename',
   type: new GraphQLNonNull(GraphQLString),
   description: 'The name of the current Object type at runtime.',

@@ -12,8 +12,8 @@ import type { Source } from './source';
 import { syntaxError } from '../error';
 
 /**
- * A representation of a lexed Token. Value is optional, is it is
- * not needed for punctuators like BANG or PAREN_L.
+ * A representation of a lexed Token. Value only appears for non-punctuation
+ * tokens: NAME, INT, FLOAT, and STRING.
  */
 export type Token = {
   kind: number;
@@ -36,9 +36,9 @@ type Lexer = (resetPosition?: number) => Token;
  * rewind or fast forward the lexer to a new position in the source.
  */
 export function lex(source: Source): Lexer {
-  var prevPosition = 0;
+  let prevPosition = 0;
   return function nextToken(resetPosition) {
-    var token = readToken(
+    const token = readToken(
       source,
       resetPosition === undefined ? prevPosition : resetPosition
     );
@@ -50,7 +50,7 @@ export function lex(source: Source): Lexer {
 /**
  * An enum describing the different kinds of tokens that the lexer emits.
  */
-export var TokenKind = {
+export const TokenKind = {
   EOF: 1,
   BANG: 2,
   DOLLAR: 3,
@@ -66,10 +66,9 @@ export var TokenKind = {
   PIPE: 13,
   BRACE_R: 14,
   NAME: 15,
-  VARIABLE: 16,
-  INT: 17,
-  FLOAT: 18,
-  STRING: 19,
+  INT: 16,
+  FLOAT: 17,
+  STRING: 18,
 };
 
 /**
@@ -88,7 +87,7 @@ export function getTokenKindDesc(kind: number): string {
   return tokenDescription[kind];
 }
 
-var tokenDescription = {};
+const tokenDescription = {};
 tokenDescription[TokenKind.EOF] = 'EOF';
 tokenDescription[TokenKind.BANG] = '!';
 tokenDescription[TokenKind.DOLLAR] = '$';
@@ -104,14 +103,12 @@ tokenDescription[TokenKind.BRACE_L] = '{';
 tokenDescription[TokenKind.PIPE] = '|';
 tokenDescription[TokenKind.BRACE_R] = '}';
 tokenDescription[TokenKind.NAME] = 'Name';
-tokenDescription[TokenKind.VARIABLE] = 'Variable';
 tokenDescription[TokenKind.INT] = 'Int';
 tokenDescription[TokenKind.FLOAT] = 'Float';
 tokenDescription[TokenKind.STRING] = 'String';
 
-var charCodeAt = String.prototype.charCodeAt;
-var fromCharCode = String.fromCharCode;
-var slice = String.prototype.slice;
+const charCodeAt = String.prototype.charCodeAt;
+const slice = String.prototype.slice;
 
 /**
  * Helper function for constructing the Token object.
@@ -120,9 +117,20 @@ function makeToken(
   kind: number,
   start: number,
   end: number,
-  value?: any
+  value?: string
 ): Token {
   return { kind, start, end, value };
+}
+
+function printCharCode(code) {
+  return (
+    // NaN/undefined represents access beyond the end of the file.
+    isNaN(code) ? '<EOF>' :
+    // Trust JSON for ASCII.
+    code < 0x007F ? JSON.stringify(String.fromCharCode(code)) :
+    // Otherwise print the escaped form.
+    `"\\u${('00' + code.toString(16).toUpperCase()).slice(-4)}"`
+  );
 }
 
 /**
@@ -133,14 +141,24 @@ function makeToken(
  * function for more complicated tokens.
  */
 function readToken(source: Source, fromPosition: number): Token {
-  var body = source.body;
-  var bodyLength = body.length;
+  const body = source.body;
+  const bodyLength = body.length;
 
-  var position = positionAfterWhitespace(body, fromPosition);
-  var code = charCodeAt.call(body, position);
+  const position = positionAfterWhitespace(body, fromPosition);
 
   if (position >= bodyLength) {
     return makeToken(TokenKind.EOF, position, position);
+  }
+
+  const code = charCodeAt.call(body, position);
+
+  // SourceCharacter
+  if (code < 0x0020 && code !== 0x0009 && code !== 0x000A && code !== 0x000D) {
+    throw syntaxError(
+      source,
+      position,
+      `Invalid character ${printCharCode(code)}.`
+    );
   }
 
   switch (code) {
@@ -201,7 +219,7 @@ function readToken(source: Source, fromPosition: number): Token {
   throw syntaxError(
     source,
     position,
-    `Unexpected character "${fromCharCode(code)}".`
+    `Unexpected character ${printCharCode(code)}.`
   );
 }
 
@@ -211,18 +229,22 @@ function readToken(source: Source, fromPosition: number): Token {
  * lexing.
  */
 function positionAfterWhitespace(body: string, startPosition: number): number {
-  var bodyLength = body.length;
-  var position = startPosition;
+  const bodyLength = body.length;
+  let position = startPosition;
   while (position < bodyLength) {
-    var code = charCodeAt.call(body, position);
-    // Skip whitespace
+    let code = charCodeAt.call(body, position);
+    // Skip Ignored
     if (
-      code === 32 || // space
-      code === 44 || // comma
-      code === 160 || // '\xa0'
-      code === 0x2028 || // line separator
-      code === 0x2029 || // paragraph separator
-      code > 8 && code < 14 // whitespace
+      // BOM
+      code === 0xFEFF ||
+      // White Space
+      code === 0x0009 || // tab
+      code === 0x0020 || // space
+      // Line Terminator
+      code === 0x000A || // new line
+      code === 0x000D || // carriage return
+      // Comma
+      code === 0x002C
     ) {
       ++position;
     // Skip comments
@@ -230,8 +252,9 @@ function positionAfterWhitespace(body: string, startPosition: number): number {
       ++position;
       while (
         position < bodyLength &&
-        (code = charCodeAt.call(body, position)) &&
-        code !== 10 && code !== 13 && code !== 0x2028 && code !== 0x2029
+        (code = charCodeAt.call(body, position)) !== null &&
+        // SourceCharacter but not LineTerminator
+        (code > 0x001F || code === 0x0009) && code !== 0x000A && code !== 0x000D
       ) {
         ++position;
       }
@@ -250,10 +273,10 @@ function positionAfterWhitespace(body: string, startPosition: number): number {
  * Float: -?(0|[1-9][0-9]*)(\.[0-9]+)?((E|e)(+|-)?[0-9]+)?
  */
 function readNumber(source, start, firstCode) {
-  var code = firstCode;
-  var body = source.body;
-  var position = start;
-  var isFloat = false;
+  const body = source.body;
+  let code = firstCode;
+  let position = start;
+  let isFloat = false;
 
   if (code === 45) { // -
     code = charCodeAt.call(body, ++position);
@@ -265,7 +288,7 @@ function readNumber(source, start, firstCode) {
       throw syntaxError(
         source,
         position,
-        `Invalid number, unexpected digit after 0: "${fromCharCode(code)}".`
+        `Invalid number, unexpected digit after 0: ${printCharCode(code)}.`
       );
     }
   } else {
@@ -303,9 +326,9 @@ function readNumber(source, start, firstCode) {
  * Returns the new position in the source after reading digits.
  */
 function readDigits(source, start, firstCode) {
-  var body = source.body;
-  var position = start;
-  var code = firstCode;
+  const body = source.body;
+  let position = start;
+  let code = firstCode;
   if (code >= 48 && code <= 57) { // 0 - 9
     do {
       code = charCodeAt.call(body, ++position);
@@ -315,29 +338,39 @@ function readDigits(source, start, firstCode) {
   throw syntaxError(
     source,
     position,
-    'Invalid number, expected digit but got: ' +
-    (code ? `"${fromCharCode(code)}"` : 'EOF') + '.'
+    `Invalid number, expected digit but got: ${printCharCode(code)}.`
   );
 }
 
 /**
  * Reads a string token from the source file.
  *
- * "([^"\\\u000A\u000D\u2028\u2029]|(\\(u[0-9a-fA-F]{4}|["\\/bfnrt])))*"
+ * "([^"\\\u000A\u000D]|(\\(u[0-9a-fA-F]{4}|["\\/bfnrt])))*"
  */
 function readString(source, start) {
-  var body = source.body;
-  var position = start + 1;
-  var chunkStart = position;
-  var code;
-  var value = '';
+  const body = source.body;
+  let position = start + 1;
+  let chunkStart = position;
+  let code = 0;
+  let value = '';
 
   while (
     position < body.length &&
-    (code = charCodeAt.call(body, position)) &&
-    code !== 34 &&
-    code !== 10 && code !== 13 && code !== 0x2028 && code !== 0x2029
+    (code = charCodeAt.call(body, position)) !== null &&
+    // not LineTerminator
+    code !== 0x000A && code !== 0x000D &&
+    // not Quote (")
+    code !== 34
   ) {
+    // SourceCharacter
+    if (code < 0x0020 && code !== 0x0009) {
+      throw syntaxError(
+        source,
+        position,
+        `Invalid character within String: ${printCharCode(code)}.`
+      );
+    }
+
     ++position;
     if (code === 92) { // \
       value += slice.call(body, chunkStart, position - 1);
@@ -351,8 +384,8 @@ function readString(source, start) {
         case 110: value += '\n'; break;
         case 114: value += '\r'; break;
         case 116: value += '\t'; break;
-        case 117:
-          var charCode = uniCharCode(
+        case 117: // u
+          const charCode = uniCharCode(
             charCodeAt.call(body, position + 1),
             charCodeAt.call(body, position + 2),
             charCodeAt.call(body, position + 3),
@@ -362,17 +395,18 @@ function readString(source, start) {
             throw syntaxError(
               source,
               position,
-              'Bad character escape sequence.'
+              `Invalid character escape sequence: ` +
+              `\\u${body.slice(position + 1, position + 5)}.`
             );
           }
-          value += fromCharCode(charCode);
+          value += String.fromCharCode(charCode);
           position += 4;
           break;
         default:
           throw syntaxError(
             source,
             position,
-            'Bad character escape sequence.'
+            `Invalid character escape sequence: \\${String.fromCharCode(code)}.`
           );
       }
       ++position;
@@ -380,7 +414,7 @@ function readString(source, start) {
     }
   }
 
-  if (code !== 34) {
+  if (code !== 34) { // quote (")
     throw syntaxError(source, position, 'Unterminated string.');
   }
 
@@ -425,13 +459,13 @@ function char2hex(a) {
  * [_A-Za-z][_0-9A-Za-z]*
  */
 function readName(source, position) {
-  var body = source.body;
-  var bodyLength = body.length;
-  var end = position + 1;
-  var code;
+  const body = source.body;
+  const bodyLength = body.length;
+  let end = position + 1;
+  let code = 0;
   while (
     end !== bodyLength &&
-    (code = charCodeAt.call(body, end)) &&
+    (code = charCodeAt.call(body, end)) !== null &&
     (
       code === 95 || // _
       code >= 48 && code <= 57 || // 0-9

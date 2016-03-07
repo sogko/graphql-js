@@ -13,24 +13,26 @@ import { GraphQLError } from '../../error';
 import { print } from '../../language/printer';
 import { GraphQLNonNull } from '../../type/definition';
 import { isValidLiteralValue } from '../../utilities/isValidLiteralValue';
+import type { GraphQLType } from '../../type/definition';
 
 
 export function defaultForNonNullArgMessage(
-  varName: any,
-  type: any,
-  guessType: any
+  varName: string,
+  type: GraphQLType,
+  guessType: GraphQLType
 ): string {
   return `Variable "$${varName}" of type "${type}" is required and will not ` +
     `use the default value. Perhaps you meant to use type "${guessType}".`;
 }
 
 export function badValueForDefaultArgMessage(
-  varName: any,
-  type: any,
-  value: any
+  varName: string,
+  type: GraphQLType,
+  value: string,
+  verboseErrors?: [string]
 ): string {
-  return `Variable "$${varName}" of type "${type}" has invalid default ` +
-    `value: ${value}.`;
+  const message = verboseErrors ? '\n' + verboseErrors.join('\n') : '';
+  return `Variable "$${varName}" has invalid default value ${value}.${message}`;
 }
 
 /**
@@ -42,21 +44,32 @@ export function badValueForDefaultArgMessage(
 export function DefaultValuesOfCorrectType(context: ValidationContext): any {
   return {
     VariableDefinition(varDefAST) {
-      var name = varDefAST.variable.name.value;
-      var defaultValue = varDefAST.defaultValue;
-      var type = context.getInputType();
+      const name = varDefAST.variable.name.value;
+      const defaultValue = varDefAST.defaultValue;
+      const type = context.getInputType();
       if (type instanceof GraphQLNonNull && defaultValue) {
-        return new GraphQLError(
+        context.reportError(new GraphQLError(
           defaultForNonNullArgMessage(name, type, type.ofType),
           [ defaultValue ]
-        );
+        ));
       }
-      if (type && defaultValue && !isValidLiteralValue(type, defaultValue)) {
-        return new GraphQLError(
-          badValueForDefaultArgMessage(name, type, print(defaultValue)),
-          [ defaultValue ]
-        );
+      if (type && defaultValue) {
+        const errors = isValidLiteralValue(type, defaultValue);
+        if (errors && errors.length > 0) {
+          context.reportError(new GraphQLError(
+            badValueForDefaultArgMessage(
+              name,
+              type,
+              print(defaultValue),
+              errors
+            ),
+            [ defaultValue ]
+          ));
+        }
       }
-    }
+      return false;
+    },
+    SelectionSet: () => false,
+    FragmentDefinition: () => false,
   };
 }

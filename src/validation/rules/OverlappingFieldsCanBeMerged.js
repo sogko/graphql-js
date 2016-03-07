@@ -15,7 +15,6 @@ import type {
   SelectionSet,
   Field,
   Argument,
-  Directive
 } from '../../language/ast';
 import { FIELD, INLINE_FRAGMENT, FRAGMENT_SPREAD } from '../../language/kinds';
 import { print } from '../../language/printer';
@@ -25,14 +24,18 @@ import {
   GraphQLInterfaceType,
 } from '../../type/definition';
 import type {
-  GraphQLType,
   GraphQLNamedType,
+  GraphQLCompositeType,
   GraphQLFieldDefinition
 } from '../../type/definition';
+import { isEqualType } from '../../utilities/typeComparators';
 import { typeFromAST } from '../../utilities/typeFromAST';
 
 
-export function fieldsConflictMessage(responseName: any, reason: any): string {
+export function fieldsConflictMessage(
+  responseName: string,
+  reason: ConflictReasonMessage
+): string {
   return `Fields "${responseName}" conflict because ${reasonMessage(reason)}.`;
 }
 
@@ -53,16 +56,16 @@ function reasonMessage(reason: ConflictReasonMessage): string {
  * without ambiguity.
  */
 export function OverlappingFieldsCanBeMerged(context: ValidationContext): any {
-  var comparedSet = new PairSet();
+  const comparedSet = new PairSet();
 
-  function findConflicts(fieldMap): Array<Conflict> {
-    var conflicts = [];
+  function findConflicts(fieldMap: AstAndDefCollection): Array<Conflict> {
+    const conflicts = [];
     Object.keys(fieldMap).forEach(responseName => {
-      var fields = fieldMap[responseName];
+      const fields = fieldMap[responseName];
       if (fields.length > 1) {
-        for (var i = 0; i < fields.length; i++) {
-          for (var j = i; j < fields.length; j++) {
-            var conflict = findConflict(responseName, fields[i], fields[j]);
+        for (let i = 0; i < fields.length; i++) {
+          for (let j = i; j < fields.length; j++) {
+            const conflict = findConflict(responseName, fields[i], fields[j]);
             if (conflict) {
               conflicts.push(conflict);
             }
@@ -75,53 +78,69 @@ export function OverlappingFieldsCanBeMerged(context: ValidationContext): any {
 
   function findConflict(
     responseName: string,
-    pair1: [Field, GraphQLFieldDefinition],
-    pair2: [Field, GraphQLFieldDefinition]
+    field1: AstAndDef,
+    field2: AstAndDef
   ): ?Conflict {
-    var [ ast1, def1 ] = pair1;
-    var [ ast2, def2 ] = pair2;
-    if (ast1 === ast2 || comparedSet.has(ast1, ast2)) {
+    const [ parentType1, ast1, def1 ] = field1;
+    const [ parentType2, ast2, def2 ] = field2;
+
+    // Not a pair.
+    if (ast1 === ast2) {
+      return;
+    }
+
+    // If the statically known parent types could not possibly apply at the same
+    // time, then it is safe to permit them to diverge as they will not present
+    // any ambiguity by differing.
+    // It is known that two parent types could never overlap if they are
+    // different Object types. Interface or Union types might overlap - if not
+    // in the current state of the schema, then perhaps in some future version,
+    // thus may not safely diverge.
+    if (parentType1 !== parentType2 &&
+        parentType1 instanceof GraphQLObjectType &&
+        parentType2 instanceof GraphQLObjectType) {
+      return;
+    }
+
+    // Memoize, do not report the same issue twice.
+    if (comparedSet.has(ast1, ast2)) {
       return;
     }
     comparedSet.add(ast1, ast2);
 
-    var name1 = ast1.name.value;
-    var name2 = ast2.name.value;
+    const name1 = ast1.name.value;
+    const name2 = ast2.name.value;
     if (name1 !== name2) {
       return [
         [ responseName, `${name1} and ${name2} are different fields` ],
-        [ ast1, ast2 ]
+        [ ast1 ],
+        [ ast2 ]
       ];
     }
 
-    var type1 = def1 && def1.type;
-    var type2 = def2 && def2.type;
-    if (type1 && type2 && !sameType(type1, type2)) {
+    const type1 = def1 && def1.type;
+    const type2 = def2 && def2.type;
+    if (type1 && type2 && !isEqualType(type1, type2)) {
       return [
         [ responseName, `they return differing types ${type1} and ${type2}` ],
-        [ ast1, ast2 ]
+        [ ast1 ],
+        [ ast2 ]
       ];
     }
 
     if (!sameArguments(ast1.arguments || [], ast2.arguments || [])) {
       return [
         [ responseName, 'they have differing arguments' ],
-        [ ast1, ast2 ]
+        [ ast1 ],
+        [ ast2 ]
       ];
     }
 
-    if (!sameDirectives(ast1.directives || [], ast2.directives || [])) {
-      return [
-        [ responseName, 'they have differing directives' ],
-        [ ast1, ast2 ]
-      ];
-    }
-
-    var selectionSet1 = ast1.selectionSet;
-    var selectionSet2 = ast2.selectionSet;
+    const selectionSet1 = ast1.selectionSet;
+    const selectionSet2 = ast2.selectionSet;
     if (selectionSet1 && selectionSet2) {
-      var visitedFragmentNames = {};
-      var subfieldMap = collectFieldASTsAndDefs(
+      const visitedFragmentNames = {};
+      let subfieldMap = collectFieldASTsAndDefs(
         context,
         getNamedType(type1),
         selectionSet1,
@@ -134,13 +153,17 @@ export function OverlappingFieldsCanBeMerged(context: ValidationContext): any {
         visitedFragmentNames,
         subfieldMap
       );
-      var conflicts = findConflicts(subfieldMap);
+      const conflicts = findConflicts(subfieldMap);
       if (conflicts.length > 0) {
         return [
           [ responseName, conflicts.map(([ reason ]) => reason) ],
           conflicts.reduce(
-            (allFields, [ , fields ]) => allFields.concat(fields),
-            [ ast1, ast2 ]
+            (allFields, [ , fields1 ]) => allFields.concat(fields1),
+            [ ast1 ]
+          ),
+          conflicts.reduce(
+            (allFields, [ , , fields2 ]) => allFields.concat(fields2),
+            [ ast2 ]
           )
         ];
       }
@@ -152,52 +175,33 @@ export function OverlappingFieldsCanBeMerged(context: ValidationContext): any {
       // Note: we validate on the reverse traversal so deeper conflicts will be
       // caught first, for clearer error messages.
       leave(selectionSet) {
-        var fieldMap = collectFieldASTsAndDefs(
+        const fieldMap = collectFieldASTsAndDefs(
           context,
           context.getParentType(),
           selectionSet
         );
-        var conflicts = findConflicts(fieldMap);
-        if (conflicts.length) {
-          return conflicts.map(([ [ responseName, reason ], fields ]) =>
-            new GraphQLError(
+        const conflicts = findConflicts(fieldMap);
+        conflicts.forEach(
+          ([ [ responseName, reason ], fields1, fields2 ]) =>
+            context.reportError(new GraphQLError(
               fieldsConflictMessage(responseName, reason),
-              fields
-            )
-          );
-        }
+              fields1.concat(fields2)
+            ))
+        );
       }
     }
   };
 }
 
-type Conflict = [ ConflictReason, Array<Field> ];
+type Conflict = [ ConflictReason, Array<Field>, Array<Field> ];
 // Field name and reason.
 type ConflictReason = [ string, ConflictReasonMessage ];
 // Reason is a string, or a nested list of conflicts.
 type ConflictReasonMessage = string | Array<ConflictReason>;
-
-function sameDirectives(
-  directives1: Array<Directive>,
-  directives2: Array<Directive>
-): boolean {
-  if (directives1.length !== directives2.length) {
-    return false;
-  }
-  return directives1.every(directive1 => {
-    var directive2 = find(
-      directives2,
-      directive => directive.name.value === directive1.name.value
-    );
-    if (!directive2) {
-      return false;
-    }
-    return sameArguments(
-      directive1.arguments || [],
-      directive2.arguments || []
-    );
-  });
-}
+// Tuple defining an AST in a context
+type AstAndDef = [ GraphQLCompositeType, Field, ?GraphQLFieldDefinition ];
+// Map of array of those.
+type AstAndDefCollection = { [key: string]: Array<AstAndDef> };
 
 function sameArguments(
   arguments1: Array<Argument>,
@@ -207,7 +211,7 @@ function sameArguments(
     return false;
   }
   return arguments1.every(argument1 => {
-    var argument2 = find(
+    const argument2 = find(
       arguments2,
       argument => argument.name.value === argument1.name.value
     );
@@ -220,10 +224,6 @@ function sameArguments(
 
 function sameValue(value1, value2) {
   return (!value1 && !value2) || print(value1) === print(value2);
-}
-
-function sameType(type1: GraphQLType, type2: GraphQLType) {
-  return String(type1) === String(type2);
 }
 
 
@@ -240,48 +240,55 @@ function collectFieldASTsAndDefs(
   parentType: ?GraphQLNamedType,
   selectionSet: SelectionSet,
   visitedFragmentNames?: {[key: string]: boolean},
-  astAndDefs?: {[key: string]: Array<[Field, ?GraphQLFieldDefinition]>}
-): {[key: string]: Array<[Field, ?GraphQLFieldDefinition]>} {
-  var _visitedFragmentNames = visitedFragmentNames || {};
-  var _astAndDefs = astAndDefs || {};
-  for (var i = 0; i < selectionSet.selections.length; i++) {
-    var selection = selectionSet.selections[i];
+  astAndDefs?: AstAndDefCollection
+): AstAndDefCollection {
+  const _visitedFragmentNames = visitedFragmentNames || {};
+  let _astAndDefs = astAndDefs || {};
+  for (let i = 0; i < selectionSet.selections.length; i++) {
+    const selection = selectionSet.selections[i];
     switch (selection.kind) {
       case FIELD:
-        var fieldName = selection.name.value;
-        var fieldDef;
+        const fieldName = selection.name.value;
+        let fieldDef;
         if (parentType instanceof GraphQLObjectType ||
             parentType instanceof GraphQLInterfaceType) {
           fieldDef = parentType.getFields()[fieldName];
         }
-        var responseName = selection.alias ? selection.alias.value : fieldName;
+        const responseName =
+          selection.alias ? selection.alias.value : fieldName;
         if (!_astAndDefs[responseName]) {
           _astAndDefs[responseName] = [];
         }
-        _astAndDefs[responseName].push([ selection, fieldDef ]);
+        _astAndDefs[responseName].push([ parentType, selection, fieldDef ]);
         break;
       case INLINE_FRAGMENT:
+        const typeCondition = selection.typeCondition;
+        const inlineFragmentType = typeCondition ?
+          typeFromAST(context.getSchema(), selection.typeCondition) :
+          parentType;
         _astAndDefs = collectFieldASTsAndDefs(
           context,
-          typeFromAST(context.getSchema(), selection.typeCondition),
+          ((inlineFragmentType: any): GraphQLNamedType),
           selection.selectionSet,
           _visitedFragmentNames,
           _astAndDefs
         );
         break;
       case FRAGMENT_SPREAD:
-        var fragName = selection.name.value;
+        const fragName = selection.name.value;
         if (_visitedFragmentNames[fragName]) {
           continue;
         }
         _visitedFragmentNames[fragName] = true;
-        var fragment = context.getFragment(fragName);
+        const fragment = context.getFragment(fragName);
         if (!fragment) {
           continue;
         }
+        const fragmentType =
+          typeFromAST(context.getSchema(), fragment.typeCondition);
         _astAndDefs = collectFieldASTsAndDefs(
           context,
-          typeFromAST(context.getSchema(), fragment.typeCondition),
+          ((fragmentType: any): GraphQLNamedType),
           fragment.selectionSet,
           _visitedFragmentNames,
           _astAndDefs
@@ -304,7 +311,7 @@ class PairSet {
   }
 
   has(a, b) {
-    var first = this._data.get(a);
+    const first = this._data.get(a);
     return first && first.has(b);
   }
 
@@ -315,7 +322,7 @@ class PairSet {
 }
 
 function _pairSetAdd(data, a, b) {
-  var set = data.get(a);
+  let set = data.get(a);
   if (!set) {
     set = new Set();
     data.set(a, set);

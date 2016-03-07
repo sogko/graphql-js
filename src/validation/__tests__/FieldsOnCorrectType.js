@@ -7,6 +7,7 @@
  *  of patent rights can be found in the PATENTS file in the same directory.
  */
 
+import { expect } from 'chai';
 import { describe, it } from 'mocha';
 import { expectPassesRule, expectFailsRule } from './harness';
 import {
@@ -15,9 +16,9 @@ import {
 } from '../rules/FieldsOnCorrectType';
 
 
-function undefinedField(field, type, line, column) {
+function undefinedField(field, type, suggestions, line, column) {
   return {
-    message: undefinedFieldMessage(field, type),
+    message: undefinedFieldMessage(field, type, suggestions),
     locations: [ { line, column } ],
   };
 }
@@ -75,23 +76,37 @@ describe('Validate: Fields on correct type', () => {
     `);
   });
 
+  it('reports errors when type is known again', () => {
+    expectFailsRule(FieldsOnCorrectType, `
+      fragment typeKnownAgain on Pet {
+        unknown_pet_field {
+          ... on Cat {
+            unknown_cat_field
+          }
+        }
+      }`,
+      [ undefinedField('unknown_pet_field', 'Pet', [], 3, 9),
+        undefinedField('unknown_cat_field', 'Cat', [], 5, 13) ]
+    );
+  });
+
   it('Field not defined on fragment', () => {
     expectFailsRule(FieldsOnCorrectType, `
       fragment fieldNotDefined on Dog {
         meowVolume
       }`,
-      [ undefinedField('meowVolume', 'Dog', 3, 9) ]
+      [ undefinedField('meowVolume', 'Dog', [], 3, 9) ]
     );
   });
 
-  it('Field not defined deeply, only reports first', () => {
+  it('Ignores deeply unknown field', () => {
     expectFailsRule(FieldsOnCorrectType, `
       fragment deepFieldNotDefined on Dog {
         unknown_field {
           deeper_unknown_field
         }
       }`,
-      [ undefinedField('unknown_field', 'Dog', 3, 9) ]
+      [ undefinedField('unknown_field', 'Dog', [], 3, 9) ]
     );
   });
 
@@ -102,7 +117,7 @@ describe('Validate: Fields on correct type', () => {
           unknown_field
         }
       }`,
-      [ undefinedField('unknown_field', 'Pet', 4, 11) ]
+      [ undefinedField('unknown_field', 'Pet', [], 4, 11) ]
     );
   });
 
@@ -113,7 +128,7 @@ describe('Validate: Fields on correct type', () => {
           meowVolume
         }
       }`,
-      [ undefinedField('meowVolume', 'Dog', 4, 11) ]
+      [ undefinedField('meowVolume', 'Dog', [], 4, 11) ]
     );
   });
 
@@ -122,7 +137,7 @@ describe('Validate: Fields on correct type', () => {
       fragment aliasedFieldTargetNotDefined on Dog {
         volume : mooVolume
       }`,
-      [ undefinedField('mooVolume', 'Dog', 3, 9) ]
+      [ undefinedField('mooVolume', 'Dog', [], 3, 9) ]
     );
   });
 
@@ -131,7 +146,7 @@ describe('Validate: Fields on correct type', () => {
       fragment aliasedLyingFieldTargetNotDefined on Dog {
         barkVolume : kawVolume
       }`,
-      [ undefinedField('kawVolume', 'Dog', 3, 9) ]
+      [ undefinedField('kawVolume', 'Dog', [], 3, 9) ]
     );
   });
 
@@ -140,16 +155,16 @@ describe('Validate: Fields on correct type', () => {
       fragment notDefinedOnInterface on Pet {
         tailLength
       }`,
-      [ undefinedField('tailLength', 'Pet', 3, 9) ]
+      [ undefinedField('tailLength', 'Pet', [], 3, 9) ]
     );
   });
 
-  it('Defined on implmentors but not on interface', () => {
+  it('Defined on implementors but not on interface', () => {
     expectFailsRule(FieldsOnCorrectType, `
       fragment definedOnImplementorsButNotInterface on Pet {
         nickname
       }`,
-      [ undefinedField('nickname', 'Pet', 3, 9) ]
+      [ undefinedField('nickname', 'Pet', [ 'Cat', 'Dog' ], 3, 9) ]
     );
   });
 
@@ -166,7 +181,7 @@ describe('Validate: Fields on correct type', () => {
       fragment directFieldSelectionOnUnion on CatOrDog {
         directField
       }`,
-      [ undefinedField('directField', 'CatOrDog', 3, 9) ]
+      [ undefinedField('directField', 'CatOrDog', [], 3, 9) ]
     );
   });
 
@@ -175,7 +190,15 @@ describe('Validate: Fields on correct type', () => {
       fragment definedOnImplementorsQueriedOnUnion on CatOrDog {
         name
       }`,
-      [ undefinedField('name', 'CatOrDog', 3, 9) ]
+      [
+        undefinedField(
+          'name',
+          'CatOrDog',
+          [ 'Being', 'Pet', 'Canine', 'Cat', 'Dog' ],
+          3,
+          9
+        )
+      ]
     );
   });
 
@@ -185,8 +208,36 @@ describe('Validate: Fields on correct type', () => {
         ... on Dog {
           name
         }
+        ... {
+          name
+        }
       }
     `);
   });
 
+  describe('Fields on correct type error message', () => {
+    it('Works with no suggestions', () => {
+      expect(
+        undefinedFieldMessage('T', 'f', [])
+      ).to.equal('Cannot query field "T" on type "f".');
+    });
+
+    it('Works with no small numbers of suggestions', () => {
+      expect(
+        undefinedFieldMessage('T', 'f', [ 'A', 'B' ])
+      ).to.equal('Cannot query field "T" on type "f". ' +
+        'However, this field exists on "A", "B". ' +
+        'Perhaps you meant to use an inline fragment?');
+    });
+
+    it('Works with lots of suggestions', () => {
+      expect(
+        undefinedFieldMessage('T', 'f', [ 'A', 'B', 'C', 'D', 'E', 'F' ])
+      ).to.equal('Cannot query field "T" on type "f". ' +
+        'However, this field exists on "A", "B", "C", "D", "E", ' +
+        'and 1 other types. ' +
+        'Perhaps you meant to use an inline fragment?');
+    });
+  });
 });
+

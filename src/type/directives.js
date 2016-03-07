@@ -28,26 +28,26 @@ export class GraphQLDirective {
   constructor(config: GraphQLDirectiveConfig) {
     this.name = config.name;
     this.description = config.description;
-    this.args = config.args;
-    this.onOperation = config.onOperation;
-    this.onFragment = config.onFragment;
-    this.onField = config.onField;
+    this.args = config.args || [];
+    this.onOperation = Boolean(config.onOperation);
+    this.onFragment = Boolean(config.onFragment);
+    this.onField = Boolean(config.onField);
   }
 }
 
 type GraphQLDirectiveConfig = {
   name: string;
-  description?: string;
-  args: Array<GraphQLArgument>;
-  onOperation: boolean;
-  onFragment: boolean;
-  onField: boolean;
+  description?: ?string;
+  args?: ?Array<GraphQLArgument>;
+  onOperation?: ?boolean;
+  onFragment?: ?boolean;
+  onField?: ?boolean;
 }
 
 /**
  * Used to conditionally include fields or fragments
  */
-export var GraphQLIncludeDirective = new GraphQLDirective({
+export const GraphQLIncludeDirective = new GraphQLDirective({
   name: 'include',
   description:
     'Directs the executor to include this field or fragment only when ' +
@@ -65,7 +65,7 @@ export var GraphQLIncludeDirective = new GraphQLDirective({
 /**
  * Used to conditionally skip (exclude) fields or fragments
  */
-export var GraphQLSkipDirective = new GraphQLDirective({
+export const GraphQLSkipDirective = new GraphQLDirective({
   name: 'skip',
   description:
     'Directs the executor to skip this field or fragment when the `if` ' +

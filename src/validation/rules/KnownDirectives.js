@@ -20,13 +20,13 @@ import {
 } from '../../language/kinds';
 
 
-export function unknownDirectiveMessage(directiveName: any): string {
+export function unknownDirectiveMessage(directiveName: string): string {
   return `Unknown directive "${directiveName}".`;
 }
 
 export function misplacedDirectiveMessage(
-  directiveName: any,
-  placement: any
+  directiveName: string,
+  placement: string
 ): string {
   return `Directive "${directiveName}" may not be used on "${placement}".`;
 }
@@ -40,38 +40,45 @@ export function misplacedDirectiveMessage(
 export function KnownDirectives(context: ValidationContext): any {
   return {
     Directive(node, key, parent, path, ancestors) {
-      var directiveDef = find(
+      const directiveDef = find(
         context.getSchema().getDirectives(),
         def => def.name === node.name.value
       );
       if (!directiveDef) {
-        return new GraphQLError(
+        context.reportError(new GraphQLError(
           unknownDirectiveMessage(node.name.value),
           [ node ]
-        );
+        ));
+        return;
       }
-      var appliedTo = ancestors[ancestors.length - 1];
-      if (appliedTo.kind === OPERATION_DEFINITION &&
-          !directiveDef.onOperation) {
-        return new GraphQLError(
-          misplacedDirectiveMessage(node.name.value, 'operation'),
-          [ node ]
-        );
-      }
-      if (appliedTo.kind === FIELD && !directiveDef.onField) {
-        return new GraphQLError(
-          misplacedDirectiveMessage(node.name.value, 'field'),
-          [ node ]
-        );
-      }
-      if ((appliedTo.kind === FRAGMENT_SPREAD ||
-           appliedTo.kind === INLINE_FRAGMENT ||
-           appliedTo.kind === FRAGMENT_DEFINITION) &&
-          !directiveDef.onFragment) {
-        return new GraphQLError(
-          misplacedDirectiveMessage(node.name.value, 'fragment'),
-          [ node ]
-        );
+      const appliedTo = ancestors[ancestors.length - 1];
+      switch (appliedTo.kind) {
+        case OPERATION_DEFINITION:
+          if (!directiveDef.onOperation) {
+            context.reportError(new GraphQLError(
+              misplacedDirectiveMessage(node.name.value, 'operation'),
+              [ node ]
+            ));
+          }
+          break;
+        case FIELD:
+          if (!directiveDef.onField) {
+            context.reportError(new GraphQLError(
+              misplacedDirectiveMessage(node.name.value, 'field'),
+              [ node ]
+            ));
+          }
+          break;
+        case FRAGMENT_SPREAD:
+        case INLINE_FRAGMENT:
+        case FRAGMENT_DEFINITION:
+          if (!directiveDef.onFragment) {
+            context.reportError(new GraphQLError(
+              misplacedDirectiveMessage(node.name.value, 'fragment'),
+              [ node ]
+            ));
+          }
+          break;
       }
     }
   };

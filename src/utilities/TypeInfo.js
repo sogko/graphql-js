@@ -53,8 +53,15 @@ export class TypeInfo {
   _fieldDefStack: Array<?GraphQLFieldDefinition>;
   _directive: ?GraphQLDirective;
   _argument: ?GraphQLArgument;
+  _getFieldDef: typeof getFieldDef;
 
-  constructor(schema: GraphQLSchema) {
+  constructor(
+    schema: GraphQLSchema,
+    // NOTE: this experimental optional second parameter is only needed in order
+    // to support non-spec-compliant codebases. You should never need to use it.
+    // It may disappear in the future.
+    getFieldDefFn?: typeof getFieldDef
+  ) {
     this._schema = schema;
     this._typeStack = [];
     this._parentTypeStack = [];
@@ -62,6 +69,7 @@ export class TypeInfo {
     this._fieldDefStack = [];
     this._directive = null;
     this._argument = null;
+    this._getFieldDef = getFieldDefFn || getFieldDef;
   }
 
   getType(): ?GraphQLOutputType {
@@ -98,12 +106,11 @@ export class TypeInfo {
 
   // Flow does not yet handle this case.
   enter(node: any/* Node */) {
-    var schema = this._schema;
-    var type;
+    const schema = this._schema;
     switch (node.kind) {
       case Kind.SELECTION_SET:
-        var namedType = getNamedType(this.getType());
-        var compositeType: ?GraphQLCompositeType;
+        const namedType = getNamedType(this.getType());
+        let compositeType: ?GraphQLCompositeType;
         if (isCompositeType(namedType)) {
           // isCompositeType is a type refining predicate, so this is safe.
           compositeType = ((namedType: any): GraphQLCompositeType);
@@ -111,10 +118,10 @@ export class TypeInfo {
         this._parentTypeStack.push(compositeType);
         break;
       case Kind.FIELD:
-        var parentType = this.getParentType();
-        var fieldDef;
+        const parentType = this.getParentType();
+        let fieldDef;
         if (parentType) {
-          fieldDef = getFieldDef(schema, parentType, node);
+          fieldDef = this._getFieldDef(schema, parentType, node);
         }
         this._fieldDefStack.push(fieldDef);
         this._typeStack.push(fieldDef && fieldDef.type);
@@ -123,25 +130,32 @@ export class TypeInfo {
         this._directive = schema.getDirective(node.name.value);
         break;
       case Kind.OPERATION_DEFINITION:
+        let type;
         if (node.operation === 'query') {
           type = schema.getQueryType();
         } else if (node.operation === 'mutation') {
           type = schema.getMutationType();
+        } else if (node.operation === 'subscription') {
+          type = schema.getSubscriptionType();
         }
         this._typeStack.push(type);
         break;
       case Kind.INLINE_FRAGMENT:
       case Kind.FRAGMENT_DEFINITION:
-        type = typeFromAST(schema, node.typeCondition);
-        this._typeStack.push(type);
+        const typeConditionAST = node.typeCondition;
+        const outputType = typeConditionAST ?
+          typeFromAST(schema, typeConditionAST) :
+          this.getType();
+        this._typeStack.push(((outputType: any): GraphQLOutputType));
         break;
       case Kind.VARIABLE_DEFINITION:
-        this._inputTypeStack.push(typeFromAST(schema, node.type));
+        const inputType = typeFromAST(schema, node.type);
+        this._inputTypeStack.push(((inputType: any): GraphQLInputType));
         break;
       case Kind.ARGUMENT:
-        var argDef;
-        var argType;
-        var fieldOrDirective = this.getDirective() || this.getFieldDef();
+        let argDef;
+        let argType;
+        const fieldOrDirective = this.getDirective() || this.getFieldDef();
         if (fieldOrDirective) {
           argDef = find(
             fieldOrDirective.args,
@@ -155,16 +169,16 @@ export class TypeInfo {
         this._inputTypeStack.push(argType);
         break;
       case Kind.LIST:
-        var listType = getNullableType(this.getInputType());
+        const listType = getNullableType(this.getInputType());
         this._inputTypeStack.push(
           listType instanceof GraphQLList ? listType.ofType : undefined
         );
         break;
       case Kind.OBJECT_FIELD:
-        var objectType = getNamedType(this.getInputType());
-        var fieldType;
+        const objectType = getNamedType(this.getInputType());
+        let fieldType;
         if (objectType instanceof GraphQLInputObjectType) {
-          var inputField = objectType.getFields()[node.name.value];
+          const inputField = objectType.getFields()[node.name.value];
           fieldType = inputField ? inputField.type : undefined;
         }
         this._inputTypeStack.push(fieldType);
@@ -214,7 +228,7 @@ function getFieldDef(
   parentType: GraphQLType,
   fieldAST: Field
 ): ?GraphQLFieldDefinition {
-  var name = fieldAST.name.value;
+  const name = fieldAST.name.value;
   if (name === SchemaMetaFieldDef.name &&
       schema.getQueryType() === parentType) {
     return SchemaMetaFieldDef;

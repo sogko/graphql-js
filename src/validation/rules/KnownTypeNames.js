@@ -10,9 +10,10 @@
 
 import type { ValidationContext } from '../index';
 import { GraphQLError } from '../../error';
+import type { GraphQLType } from '../../type/definition';
 
 
-export function unknownTypeMessage(type: any): string {
+export function unknownTypeMessage(type: GraphQLType): string {
   return `Unknown type "${type}".`;
 }
 
@@ -24,11 +25,20 @@ export function unknownTypeMessage(type: any): string {
  */
 export function KnownTypeNames(context: ValidationContext): any {
   return {
+    // TODO: when validating IDL, re-enable these. Experimental version does not
+    // add unreferenced types, resulting in false-positive errors. Squelched
+    // errors for now.
+    ObjectTypeDefinition: () => false,
+    InterfaceTypeDefinition: () => false,
+    UnionTypeDefinition: () => false,
+    InputObjectTypeDefinition: () => false,
     NamedType(node) {
-      var typeName = node.name.value;
-      var type = context.getSchema().getType(typeName);
+      const typeName = node.name.value;
+      const type = context.getSchema().getType(typeName);
       if (!type) {
-        return new GraphQLError(unknownTypeMessage(typeName), [ node ]);
+        context.reportError(
+          new GraphQLError(unknownTypeMessage(typeName), [ node ])
+        );
       }
     }
   };

@@ -8,11 +8,17 @@
  *  of patent rights can be found in the PATENTS file in the same directory.
  */
 
+import type { ValidationContext } from '../index';
 import { GraphQLError } from '../../error';
 
 
-export function unusedVariableMessage(varName: any): string {
-  return `Variable "$${varName}" is never used.`;
+export function unusedVariableMessage(
+  varName: string,
+  opName: ?string
+): string {
+  return opName ?
+    `Variable "$${varName}" is never used in operation "${opName}".` :
+    `Variable "$${varName}" is never used.`;
 }
 
 /**
@@ -21,47 +27,36 @@ export function unusedVariableMessage(varName: any): string {
  * A GraphQL operation is only valid if all variables defined by an operation
  * are used, either directly or within a spread fragment.
  */
-export function NoUnusedVariables(): any {
-  var visitedFragmentNames = {};
-  var variableDefs = [];
-  var variableNameUsed = {};
+export function NoUnusedVariables(context: ValidationContext): any {
+  let variableDefs = [];
 
   return {
-    // Visit FragmentDefinition after visiting FragmentSpread
-    visitSpreadFragments: true,
-
     OperationDefinition: {
       enter() {
-        visitedFragmentNames = {};
         variableDefs = [];
-        variableNameUsed = {};
       },
-      leave() {
-        var errors = variableDefs
-          .filter(def => variableNameUsed[def.variable.name.value] !== true)
-          .map(def => new GraphQLError(
-            unusedVariableMessage(def.variable.name.value),
-            [ def ]
-          ));
-        if (errors.length > 0) {
-          return errors;
-        }
+      leave(operation) {
+        const variableNameUsed = Object.create(null);
+        const usages = context.getRecursiveVariableUsages(operation);
+        const opName = operation.name ? operation.name.value : null;
+
+        usages.forEach(({ node }) => {
+          variableNameUsed[node.name.value] = true;
+        });
+
+        variableDefs.forEach(variableDef => {
+          const variableName = variableDef.variable.name.value;
+          if (variableNameUsed[variableName] !== true) {
+            context.reportError(new GraphQLError(
+              unusedVariableMessage(variableName, opName),
+              [ variableDef ]
+            ));
+          }
+        });
       }
     },
     VariableDefinition(def) {
       variableDefs.push(def);
-      // Do not visit deeper, or else the defined variable name will be visited.
-      return false;
-    },
-    Variable(variable) {
-      variableNameUsed[variable.name.value] = true;
-    },
-    FragmentSpread(spreadAST) {
-      // Only visit fragments of a particular name once per operation
-      if (visitedFragmentNames[spreadAST.name.value] === true) {
-        return false;
-      }
-      visitedFragmentNames[spreadAST.name.value] = true;
     }
   };
 }
