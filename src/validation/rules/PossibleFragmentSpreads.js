@@ -28,7 +28,7 @@ export function typeIncompatibleAnonSpreadMessage(
   parentType: GraphQLType,
   fragType: GraphQLType
 ): string {
-  return `Fragment cannot be spread here as objects of ` +
+  return 'Fragment cannot be spread here as objects of ' +
     `type "${parentType}" can never be of type "${fragType}".`;
 }
 
@@ -44,7 +44,9 @@ export function PossibleFragmentSpreads(context: ValidationContext): any {
     InlineFragment(node) {
       const fragType = context.getType();
       const parentType = context.getParentType();
-      if (fragType && parentType && !doTypesOverlap(fragType, parentType)) {
+      if (fragType &&
+          parentType &&
+          !doTypesOverlap(context.getSchema(), fragType, parentType)) {
         context.reportError(new GraphQLError(
           typeIncompatibleAnonSpreadMessage(parentType, fragType),
           [ node ]
@@ -55,7 +57,9 @@ export function PossibleFragmentSpreads(context: ValidationContext): any {
       const fragName = node.name.value;
       const fragType = getFragmentType(context, fragName);
       const parentType = context.getParentType();
-      if (fragType && parentType && !doTypesOverlap(fragType, parentType)) {
+      if (fragType &&
+          parentType &&
+          !doTypesOverlap(context.getSchema(), fragType, parentType)) {
         context.reportError(new GraphQLError(
           typeIncompatibleSpreadMessage(fragName, parentType, fragType),
           [ node ]

@@ -137,7 +137,7 @@ describe('Execute: Handles basic execution tasks', () => {
     });
 
     expect(
-      await execute(schema, ast, data, { size: 100 }, 'Example')
+      await execute(schema, ast, data, null, { size: 100 }, 'Example')
     ).to.deep.equal(expected);
   });
 
@@ -183,14 +183,14 @@ describe('Execute: Handles basic execution tasks', () => {
     });
   });
 
-  it('threads context correctly', async () => {
-    const doc = `query Example { a }`;
+  it('threads root value context correctly', async () => {
+    const doc = 'query Example { a }';
 
     const data = {
       contextThing: 'thing',
     };
 
-    let resolvedContext;
+    let resolvedRootValue;
 
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
@@ -198,8 +198,8 @@ describe('Execute: Handles basic execution tasks', () => {
         fields: {
           a: {
             type: GraphQLString,
-            resolve(context) {
-              resolvedContext = context;
+            resolve(rootValue) {
+              resolvedRootValue = rootValue;
             }
           }
         }
@@ -208,7 +208,7 @@ describe('Execute: Handles basic execution tasks', () => {
 
     await execute(schema, parse(doc), data);
 
-    expect(resolvedContext.contextThing).to.equal('thing');
+    expect(resolvedRootValue.contextThing).to.equal('thing');
   });
 
   it('correctly threads arguments', async () => {
@@ -378,8 +378,8 @@ describe('Execute: Handles basic execution tasks', () => {
     ]);
   });
 
-  it('uses the inline operation if no operation is provided', async () => {
-    const doc = `{ a }`;
+  it('uses the inline operation if no operation name is provided', async () => {
+    const doc = '{ a }';
     const data = { a: 'b' };
     const ast = parse(doc);
     const schema = new GraphQLSchema({
@@ -396,8 +396,8 @@ describe('Execute: Handles basic execution tasks', () => {
     expect(result).to.deep.equal({ data: { a: 'b' } });
   });
 
-  it('uses the only operation if no operation is provided', async () => {
-    const doc = `query Example { a }`;
+  it('uses the only operation if no operation name is provided', async () => {
+    const doc = 'query Example { a }';
     const data = { a: 'b' };
     const ast = parse(doc);
     const schema = new GraphQLSchema({
@@ -414,8 +414,44 @@ describe('Execute: Handles basic execution tasks', () => {
     expect(result).to.deep.equal({ data: { a: 'b' } });
   });
 
-  it('throws if no operation is provided with multiple operations', () => {
-    const doc = `query Example { a } query OtherExample { a }`;
+  it('uses the named operation if operation name is provided', async () => {
+    const doc = 'query Example { first: a } query OtherExample { second: a }';
+    const data = { a: 'b' };
+    const ast = parse(doc);
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Type',
+        fields: {
+          a: { type: GraphQLString },
+        }
+      })
+    });
+
+    const result = await execute(schema, ast, data, null, null, 'OtherExample');
+
+    expect(result).to.deep.equal({ data: { second: 'b' } });
+  });
+
+  it('throws if no operation is provided', () => {
+    const doc = 'fragment Example on Type { a }';
+    const data = { a: 'b' };
+    const ast = parse(doc);
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Type',
+        fields: {
+          a: { type: GraphQLString },
+        }
+      })
+    });
+
+    expect(() => execute(schema, ast, data)).to.throw(
+      'Must provide an operation.'
+    );
+  });
+
+  it('throws if no operation name is provided with multiple operations', () => {
+    const doc = 'query Example { a } query OtherExample { a }';
     const data = { a: 'b' };
     const ast = parse(doc);
     const schema = new GraphQLSchema({
@@ -432,8 +468,28 @@ describe('Execute: Handles basic execution tasks', () => {
     );
   });
 
+  it('throws if unknown operation name is provided', () => {
+    const doc = 'query Example { a } query OtherExample { a }';
+    const data = { a: 'b' };
+    const ast = parse(doc);
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Type',
+        fields: {
+          a: { type: GraphQLString },
+        }
+      })
+    });
+
+    expect(() =>
+      execute(schema, ast, data, null, null, 'UnknownExample')
+    ).to.throw(
+      'Unknown operation named "UnknownExample".'
+    );
+  });
+
   it('uses the query schema for queries', async () => {
-    const doc = `query Q { a } mutation M { c } subscription S { a }`;
+    const doc = 'query Q { a } mutation M { c } subscription S { a }';
     const data = { a: 'b', c: 'd' };
     const ast = parse(doc);
     const schema = new GraphQLSchema({
@@ -457,13 +513,13 @@ describe('Execute: Handles basic execution tasks', () => {
       })
     });
 
-    const queryResult = await execute(schema, ast, data, {}, 'Q');
+    const queryResult = await execute(schema, ast, data, null, {}, 'Q');
 
     expect(queryResult).to.deep.equal({ data: { a: 'b' } });
   });
 
   it('uses the mutation schema for mutations', async () => {
-    const doc = `query Q { a } mutation M { c }`;
+    const doc = 'query Q { a } mutation M { c }';
     const data = { a: 'b', c: 'd' };
     const ast = parse(doc);
     const schema = new GraphQLSchema({
@@ -481,13 +537,13 @@ describe('Execute: Handles basic execution tasks', () => {
       })
     });
 
-    const mutationResult = await execute(schema, ast, data, {}, 'M');
+    const mutationResult = await execute(schema, ast, data, null, {}, 'M');
 
     expect(mutationResult).to.deep.equal({ data: { c: 'd' } });
   });
 
   it('uses the subscription schema for subscriptions', async () => {
-    const doc = `query Q { a } subscription S { a }`;
+    const doc = 'query Q { a } subscription S { a }';
     const data = { a: 'b', c: 'd' };
     const ast = parse(doc);
     const schema = new GraphQLSchema({
@@ -505,7 +561,7 @@ describe('Execute: Handles basic execution tasks', () => {
       })
     });
 
-    const subscriptionResult = await execute(schema, ast, data, {}, 'S');
+    const subscriptionResult = await execute(schema, ast, data, null, {}, 'S');
 
     expect(subscriptionResult).to.deep.equal({ data: { a: 'b' } });
   });
@@ -590,7 +646,7 @@ describe('Execute: Handles basic execution tasks', () => {
       }),
     });
 
-    const queryResult = await execute(schema, ast, data, {}, 'Q');
+    const queryResult = await execute(schema, ast, data, null, {}, 'Q');
 
     expect(queryResult).to.deep.equal({ data: { a: 'b' } });
   });
@@ -731,10 +787,11 @@ describe('Execute: Handles basic execution tasks', () => {
       caughtError = error;
     }
 
-    expect(caughtError).to.deep.equal({
-      message:
+    expect(caughtError).to.deep.equal(
+      new Error(
         'GraphQL cannot execute a request containing a ObjectTypeDefinition.'
-    });
+      )
+    );
   });
 
 });

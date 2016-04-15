@@ -16,7 +16,7 @@ import flowBinPath from 'flow-bin';
 process.env.PATH += ':./node_modules/.bin';
 
 var cmd = resolvePath(__dirname);
-var srcDir = resolvePath(cmd, './src');
+var srcDir = resolvePath(cmd, '../src');
 
 function exec(command, options) {
   return new Promise((resolve, reject) => {
@@ -47,9 +47,9 @@ var watcher = sane(srcDir, { glob: ['**/*.js', '**/*.graphql'] })
   .on('change', changeFile);
 
 process.on('SIGINT', () => {
+  console.log(CLEARLINE + yellow(invert('stopped watching')));
   watcher.close();
   flowServer.kill();
-  console.log(CLEARLINE + yellow(invert('stopped watching')));
   process.exit();
 });
 
@@ -130,11 +130,14 @@ function parseFiles(filepaths) {
 function runTests(filepaths) {
   console.log('\nRunning Tests');
 
-  return exec('mocha', [
+  return exec('babel-node', [
+    './node_modules/.bin/_mocha',
     '--reporter', 'progress',
-    '--require', 'resources/mocha-bootload'
+    '--require', './resources/mocha-bootload',
   ].concat(
-    allTests(filepaths) ? filepaths.map(srcPath) : ['src/**/__tests__/**/*.js']
+    allTests(filepaths) ?
+      filepaths.map(srcPath) :
+      ['src/**/__tests__/**/*-test.js']
   )).catch(() => false);
 }
 
@@ -177,8 +180,10 @@ function allTests(filepaths) {
   return filepaths.length > 0 && filepaths.every(isTest);
 }
 
+var TEST_PATH_RX = /^(?:.*?\/)?__tests__\/.+?-test\.js$/;
+
 function isTest(filepath) {
-  return isJS(filepath) && ~filepath.indexOf('__tests__/');
+  return TEST_PATH_RX.test(filepath);
 }
 
 // Print helpers
