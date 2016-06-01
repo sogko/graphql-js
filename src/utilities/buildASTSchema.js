@@ -8,17 +8,17 @@
  *  of patent rights can be found in the PATENTS file in the same directory.
  */
 
+import find from '../jsutils/find';
 import invariant from '../jsutils/invariant';
 import keyMap from '../jsutils/keyMap';
 import keyValMap from '../jsutils/keyValMap';
 import { valueFromAST } from './valueFromAST';
 
+import { getArgumentValues } from '../execution/values';
+
 import {
   LIST_TYPE,
   NON_NULL_TYPE,
-} from '../language/kinds';
-
-import {
   DOCUMENT,
   SCHEMA_DEFINITION,
   SCALAR_TYPE_DEFINITION,
@@ -32,6 +32,7 @@ import {
 
 import type {
   Document,
+  Directive,
   Type,
   NamedType,
   SchemaDefinition,
@@ -63,7 +64,12 @@ import {
   GraphQLNonNull,
 } from '../type';
 
-import { GraphQLDirective } from '../type/directives';
+import {
+  GraphQLDirective,
+  GraphQLSkipDirective,
+  GraphQLIncludeDirective,
+  GraphQLDeprecatedDirective,
+} from '../type/directives';
 
 import {
   __Schema,
@@ -223,6 +229,19 @@ export function buildASTSchema(ast: Document): GraphQLSchema {
 
   const directives = directiveDefs.map(getDirective);
 
+  // If specified directives were not explicitly declared, add them.
+  if (!directives.some(directive => directive.name === 'skip')) {
+    directives.push(GraphQLSkipDirective);
+  }
+
+  if (!directives.some(directive => directive.name === 'include')) {
+    directives.push(GraphQLIncludeDirective);
+  }
+
+  if (!directives.some(directive => directive.name === 'deprecated')) {
+    directives.push(GraphQLDeprecatedDirective);
+  }
+
   return new GraphQLSchema({
     query: getObjectType(astMap[queryTypeName]),
     mutation: mutationTypeName ? getObjectType(astMap[mutationTypeName]) : null,
@@ -311,6 +330,7 @@ export function buildASTSchema(ast: Document): GraphQLSchema {
       field => ({
         type: produceTypeDef(field.type),
         args: makeInputValues(field.arguments),
+        deprecationReason: getDeprecationReason(field.directives)
       })
     );
   }
@@ -343,7 +363,13 @@ export function buildASTSchema(ast: Document): GraphQLSchema {
   function makeEnumDef(def: EnumTypeDefinition) {
     const enumType = new GraphQLEnumType({
       name: def.name.value,
-      values: keyValMap(def.values, v => v.name.value, () => ({})),
+      values: keyValMap(
+        def.values,
+        enumValue => enumValue.name.value,
+        enumValue => ({
+          deprecationReason: getDeprecationReason(enumValue.directives)
+        })
+      ),
     });
 
     return enumType;
@@ -376,4 +402,19 @@ export function buildASTSchema(ast: Document): GraphQLSchema {
       fields: () => makeInputValues(def.fields),
     });
   }
+}
+
+function getDeprecationReason(directives: ?Array<Directive>): ?string {
+  const deprecatedAST = directives && find(
+    directives,
+    directive => directive.name.value === GraphQLDeprecatedDirective.name
+  );
+  if (!deprecatedAST) {
+    return;
+  }
+  const { reason } = getArgumentValues(
+    GraphQLDeprecatedDirective.args,
+    deprecatedAST.arguments
+  );
+  return (reason: any);
 }

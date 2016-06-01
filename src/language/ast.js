@@ -268,6 +268,7 @@ export type TypeSystemDefinition = SchemaDefinition
 export type SchemaDefinition = {
   kind: 'SchemaDefinition';
   loc?: ?Location;
+  directives: Array<Directive>;
   operationTypes: Array<OperationTypeDefinition>;
 }
 
@@ -289,6 +290,7 @@ export type ScalarTypeDefinition = {
   kind: 'ScalarTypeDefinition';
   loc?: ?Location;
   name: Name;
+  directives?: ?Array<Directive>;
 }
 
 export type ObjectTypeDefinition = {
@@ -296,6 +298,7 @@ export type ObjectTypeDefinition = {
   loc?: ?Location;
   name: Name;
   interfaces?: ?Array<NamedType>;
+  directives?: ?Array<Directive>;
   fields: Array<FieldDefinition>;
 }
 
@@ -305,6 +308,7 @@ export type FieldDefinition = {
   name: Name;
   arguments: Array<InputValueDefinition>;
   type: Type;
+  directives?: ?Array<Directive>;
 }
 
 export type InputValueDefinition = {
@@ -313,12 +317,14 @@ export type InputValueDefinition = {
   name: Name;
   type: Type;
   defaultValue?: ?Value;
+  directives?: ?Array<Directive>;
 }
 
 export type InterfaceTypeDefinition = {
   kind: 'InterfaceTypeDefinition';
   loc?: ?Location;
   name: Name;
+  directives?: ?Array<Directive>;
   fields: Array<FieldDefinition>;
 }
 
@@ -326,6 +332,7 @@ export type UnionTypeDefinition = {
   kind: 'UnionTypeDefinition';
   loc?: ?Location;
   name: Name;
+  directives?: ?Array<Directive>;
   types: Array<NamedType>;
 }
 
@@ -333,6 +340,7 @@ export type EnumTypeDefinition = {
   kind: 'EnumTypeDefinition';
   loc?: ?Location;
   name: Name;
+  directives?: ?Array<Directive>;
   values: Array<EnumValueDefinition>;
 }
 
@@ -340,12 +348,14 @@ export type EnumValueDefinition = {
   kind: 'EnumValueDefinition';
   loc?: ?Location;
   name: Name;
+  directives?: ?Array<Directive>;
 }
 
 export type InputObjectTypeDefinition = {
   kind: 'InputObjectTypeDefinition';
   loc?: ?Location;
   name: Name;
+  directives?: ?Array<Directive>;
   fields: Array<InputValueDefinition>;
 }
 

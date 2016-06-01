@@ -12,6 +12,11 @@ import { describe, it } from 'mocha';
 import { parse } from '../../language';
 import { printSchema } from '../schemaPrinter';
 import { buildASTSchema } from '../buildASTSchema';
+import {
+  GraphQLSkipDirective,
+  GraphQLIncludeDirective,
+  GraphQLDeprecatedDirective,
+} from '../../type/directives';
 
 /**
  * This function does a full cycle of going from a
@@ -59,6 +64,70 @@ type Hello {
 `;
     const output = cycleOutput(body);
     expect(output).to.equal(body);
+  });
+
+
+  it('Maintains @skip & @include', () => {
+    const body = `
+schema {
+  query: Hello
+}
+
+type Hello {
+  str: String
+}
+`;
+    const schema = buildASTSchema(parse(body));
+    expect(schema.getDirectives().length).to.equal(3);
+    expect(schema.getDirective('skip')).to.equal(GraphQLSkipDirective);
+    expect(schema.getDirective('include')).to.equal(GraphQLIncludeDirective);
+    expect(
+      schema.getDirective('deprecated')
+    ).to.equal(GraphQLDeprecatedDirective);
+  });
+
+  it('Overriding directives excludes specified', () => {
+    const body = `
+schema {
+  query: Hello
+}
+
+directive @skip on FIELD
+directive @include on FIELD
+directive @deprecated on FIELD_DEFINITION
+
+type Hello {
+  str: String
+}
+`;
+    const schema = buildASTSchema(parse(body));
+    expect(schema.getDirectives().length).to.equal(3);
+    expect(schema.getDirective('skip')).to.not.equal(GraphQLSkipDirective);
+    expect(
+      schema.getDirective('include')
+    ).to.not.equal(GraphQLIncludeDirective);
+    expect(
+      schema.getDirective('deprecated')
+    ).to.not.equal(GraphQLDeprecatedDirective);
+  });
+
+  it('Adding directives maintains @skip & @include', () => {
+    const body = `
+schema {
+  query: Hello
+}
+
+directive @foo(arg: Int) on FIELD
+
+type Hello {
+  str: String
+}
+`;
+    const schema = buildASTSchema(parse(body));
+    expect(schema.getDirectives().length).to.equal(4);
+    expect(schema.getDirective('skip')).to.not.equal(undefined);
+    expect(schema.getDirective('include')).to.not.equal(undefined);
+    expect(schema.getDirective('deprecated')).to.not.equal(undefined);
   });
 
   it('Type modifiers', () => {
@@ -393,6 +462,28 @@ type Query {
 }
 
 union Union = Concrete
+`;
+    const output = cycleOutput(body);
+    expect(output).to.equal(body);
+  });
+
+  it('Supports @deprecated', () => {
+    const body = `
+schema {
+  query: Query
+}
+
+enum MyEnum {
+  VALUE
+  OLD_VALUE @deprecated
+  OTHER_VALUE @deprecated(reason: "Terrible reasons")
+}
+
+type Query {
+  field1: String @deprecated
+  field2: Int @deprecated(reason: "Because I said so")
+  enum: MyEnum
+}
 `;
     const output = cycleOutput(body);
     expect(output).to.equal(body);

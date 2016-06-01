@@ -17,11 +17,7 @@ import {
   GraphQLNonNull
 } from './definition';
 import type { GraphQLType, GraphQLAbstractType } from './definition';
-import {
-  GraphQLDirective,
-  GraphQLIncludeDirective,
-  GraphQLSkipDirective
-} from './directives';
+import { GraphQLDirective, specifiedDirectives } from './directives';
 import { __Schema } from './introspection';
 import find from '../jsutils/find';
 import invariant from '../jsutils/invariant';
@@ -38,9 +34,20 @@ import { isEqualType, isTypeSubTypeOf } from '../utilities/typeComparators';
  * Example:
  *
  *     const MyAppSchema = new GraphQLSchema({
- *       query: MyAppQueryRootType
- *       mutation: MyAppMutationRootType
- *     });
+ *       query: MyAppQueryRootType,
+ *       mutation: MyAppMutationRootType,
+ *     })
+ *
+ * Note: If an array of `directives` are provided to GraphQLSchema, that will be
+ * the exact list of directives represented and allowed. If `directives` is not
+ * provided then a default set of the specified directives (e.g. @include and
+ * @skip) will be used. If you wish to provide *additional* directives to these
+ * specified directives, you must explicitly declare them. Example:
+ *
+ *     const MyAppSchema = new GraphQLSchema({
+ *       ...
+ *       directives: specifiedDirectives.concat([ myCustomDirective ]),
+ *     })
  *
  */
 export class GraphQLSchema {
@@ -92,11 +99,8 @@ export class GraphQLSchema {
       `Schema directives must be Array<GraphQLDirective> if provided but got: ${
         config.directives}.`
     );
-    // Provide `@include() and `@skip()` directives by default.
-    this._directives = config.directives || [
-      GraphQLIncludeDirective,
-      GraphQLSkipDirective
-    ];
+    // Provide specified directives (e.g. @include and @skip) by default.
+    this._directives = config.directives || specifiedDirectives;
 
     // Build type map now to detect any errors within this schema.
     let initialTypes: Array<?GraphQLType> = [
@@ -183,8 +187,15 @@ export class GraphQLSchema {
     }
 
     if (!possibleTypeMap[abstractType.name]) {
+      const possibleTypes = this.getPossibleTypes(abstractType);
+      invariant(
+        Array.isArray(possibleTypes),
+        `Could not find possible implementing types for ${abstractType} in ` +
+        'schema. Check that schema.types is defined and is an array of' +
+        'all possible types in the schema.'
+      );
       possibleTypeMap[abstractType.name] =
-        this.getPossibleTypes(abstractType).reduce(
+        possibleTypes.reduce(
           (map, type) => ((map[type.name] = true), map),
           Object.create(null)
         );

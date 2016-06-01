@@ -10,29 +10,30 @@
 
 import type { ValidationContext } from '../index';
 import { GraphQLError } from '../../error';
+import suggestionList from '../../jsutils/suggestionList';
+import quotedOrList from '../../jsutils/quotedOrList';
 import type { Field } from '../../language/ast';
 import type { GraphQLSchema } from '../../type/schema';
-import type { GraphQLAbstractType } from '../../type/definition';
-import { isAbstractType } from '../../type/definition';
+import type { GraphQLOutputType } from '../../type/definition';
+import {
+  GraphQLObjectType,
+  GraphQLInterfaceType,
+  GraphQLUnionType,
+} from '../../type/definition';
 
 
 export function undefinedFieldMessage(
   fieldName: string,
   type: string,
-  suggestedTypes: Array<string>
+  suggestedTypeNames: Array<string>,
+  suggestedFieldNames: Array<string>
 ): string {
   let message = `Cannot query field "${fieldName}" on type "${type}".`;
-  const MAX_LENGTH = 5;
-  if (suggestedTypes.length !== 0) {
-    let suggestions = suggestedTypes
-      .slice(0, MAX_LENGTH)
-      .map(t => `"${t}"`)
-      .join(', ');
-    if (suggestedTypes.length > MAX_LENGTH) {
-      suggestions += `, and ${suggestedTypes.length - MAX_LENGTH} other types`;
-    }
-    message += ` However, this field exists on ${suggestions}.`;
-    message += ' Perhaps you meant to use an inline fragment?';
+  if (suggestedTypeNames.length !== 0) {
+    const suggestions = quotedOrList(suggestedTypeNames);
+    message += ` Did you mean to use an inline fragment on ${suggestions}?`;
+  } else if (suggestedFieldNames.length !== 0) {
+    message += ` Did you mean ${quotedOrList(suggestedFieldNames)}?`;
   }
   return message;
 }
@@ -50,21 +51,25 @@ export function FieldsOnCorrectType(context: ValidationContext): any {
       if (type) {
         const fieldDef = context.getFieldDef();
         if (!fieldDef) {
-          // This isn't valid. Let's find suggestions, if any.
-          let suggestedTypes = [];
-          if (isAbstractType(type)) {
-            const schema = context.getSchema();
-            suggestedTypes = getSiblingInterfacesIncludingField(
-              schema,
-              type,
-              node.name.value
-            );
-            suggestedTypes = suggestedTypes.concat(
-              getImplementationsIncludingField(schema, type, node.name.value)
-            );
-          }
+          // This field doesn't exist, lets look for suggestions.
+          const schema = context.getSchema();
+          const fieldName = node.name.value;
+          // First determine if there are any suggested types to condition on.
+          const suggestedTypeNames =
+            getSuggestedTypeNames(schema, type, fieldName);
+          // If there are no suggested types, then perhaps this was a typo?
+          const suggestedFieldNames = suggestedTypeNames.length !== 0 ?
+            [] :
+            getSuggestedFieldNames(schema, type, fieldName);
+
+          // Report an error, including helpful suggestions.
           context.reportError(new GraphQLError(
-            undefinedFieldMessage(node.name.value, type.name, suggestedTypes),
+            undefinedFieldMessage(
+              fieldName,
+              type.name,
+              suggestedTypeNames,
+              suggestedFieldNames
+            ),
             [ node ]
           ));
         }
@@ -74,43 +79,62 @@ export function FieldsOnCorrectType(context: ValidationContext): any {
 }
 
 /**
- * Return implementations of `type` that include `fieldName` as a valid field.
+ * Go through all of the implementations of type, as well as the interfaces
+ * that they implement. If any of those types include the provided field,
+ * suggest them, sorted by how often the type is referenced,  starting
+ * with Interfaces.
  */
-function getImplementationsIncludingField(
+function getSuggestedTypeNames(
   schema: GraphQLSchema,
-  type: GraphQLAbstractType,
+  type: GraphQLOutputType,
   fieldName: string
 ): Array<string> {
-  return schema.getPossibleTypes(type)
-    .filter(t => t.getFields()[fieldName] !== undefined)
-    .map(t => t.name)
-    .sort();
+  if (type instanceof GraphQLInterfaceType ||
+      type instanceof GraphQLUnionType) {
+    const suggestedObjectTypes = [];
+    const interfaceUsageCount = Object.create(null);
+    schema.getPossibleTypes(type).forEach(possibleType => {
+      if (!possibleType.getFields()[fieldName]) {
+        return;
+      }
+      // This object type defines this field.
+      suggestedObjectTypes.push(possibleType.name);
+      possibleType.getInterfaces().forEach(possibleInterface => {
+        if (!possibleInterface.getFields()[fieldName]) {
+          return;
+        }
+        // This interface type defines this field.
+        interfaceUsageCount[possibleInterface.name] =
+          (interfaceUsageCount[possibleInterface.name] || 0) + 1;
+      });
+    });
+
+    // Suggest interface types based on how common they are.
+    const suggestedInterfaceTypes = Object.keys(interfaceUsageCount)
+      .sort((a, b) => interfaceUsageCount[b] - interfaceUsageCount[a]);
+
+    // Suggest both interface and object types.
+    return suggestedInterfaceTypes.concat(suggestedObjectTypes);
+  }
+
+  // Otherwise, must be an Object type, which does not have possible fields.
+  return [];
 }
 
 /**
- * Go through all of the implementations of type, and find other interaces
- * that they implement. If those interfaces include `field` as a valid field,
- * return them, sorted by how often the implementations include the other
- * interface.
+ * For the field name provided, determine if there are any similar field names
+ * that may be the result of a typo.
  */
-function getSiblingInterfacesIncludingField(
+function getSuggestedFieldNames(
   schema: GraphQLSchema,
-  type: GraphQLAbstractType,
+  type: GraphQLOutputType,
   fieldName: string
 ): Array<string> {
-  const suggestedInterfaces = schema.getPossibleTypes(type).reduce((acc, t) => {
-    t.getInterfaces().forEach(i => {
-      if (i.getFields()[fieldName] === undefined) {
-        return;
-      }
-      if (acc[i.name] === undefined) {
-        acc[i.name] = 0;
-      }
-      acc[i.name] += 1;
-    });
-    return acc;
-  }, {});
-  return Object.keys(suggestedInterfaces)
-    .sort((a,b) => suggestedInterfaces[b] - suggestedInterfaces[a]);
+  if (type instanceof GraphQLObjectType ||
+      type instanceof GraphQLInterfaceType) {
+    const possibleFieldNames = Object.keys(type.getFields());
+    return suggestionList(fieldName, possibleFieldNames);
+  }
+  // Otherwise, must be a Union type, which does not define fields.
+  return [];
 }
-

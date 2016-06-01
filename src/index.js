@@ -51,6 +51,13 @@ export {
   GraphQLInputObjectType,
   GraphQLList,
   GraphQLNonNull,
+  GraphQLDirective,
+
+  // "Enum" of Type Kinds
+  TypeKind,
+
+  // "Enum" of Directive Locations
+  DirectiveLocation,
 
   // Scalars
   GraphQLInt,
@@ -58,6 +65,30 @@ export {
   GraphQLString,
   GraphQLBoolean,
   GraphQLID,
+
+  // Built-in Directives defined by the Spec
+  specifiedDirectives,
+  GraphQLIncludeDirective,
+  GraphQLSkipDirective,
+  GraphQLDeprecatedDirective,
+
+  // Constant Deprecation Reason
+  DEFAULT_DEPRECATION_REASON,
+
+  // Meta-field definitions.
+  SchemaMetaFieldDef,
+  TypeMetaFieldDef,
+  TypeNameMetaFieldDef,
+
+  // GraphQL Types for introspection.
+  __Schema,
+  __Directive,
+  __DirectiveLocation,
+  __Type,
+  __Field,
+  __InputValue,
+  __EnumValue,
+  __TypeKind,
 
   // Predicates
   isType,
